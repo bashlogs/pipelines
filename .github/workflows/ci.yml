@@ -32,7 +32,9 @@ jobs:
       # ---------------- Backend ----------------
       - name: Build backend image
         run: |
-          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:latest ./backend
+          docker build \
+          --build-arg MONGO_URI=${{ secrets.MONGO_URI }} \
+          -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:latest ./backend
           docker tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:latest \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ github.sha }}
 
