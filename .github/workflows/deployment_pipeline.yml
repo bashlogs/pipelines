@@ -1,0 +1,89 @@
+name: Build, Push, and Deploy to AKS
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_BACKEND: ${{ github.repository }}-backend
+  IMAGE_NAME_FRONTEND: ${{ github.repository }}-frontend
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # ---------------- Checkout ----------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ---------------- Docker Login ----------------
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ---------------- Build Backend ----------------
+      - name: Build backend image
+        run: |
+          docker build \
+            --build-arg MONGO_URI=${{ secrets.MONGO_URI }} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:latest ./backend
+          docker tag \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:latest \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ github.sha }}
+
+      - name: Push backend image
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }}:${{ github.sha }}
+
+      # ---------------- Build Frontend ----------------
+      - name: Build frontend image
+        run: |
+          docker build -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:latest ./frontend
+          docker tag \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:latest \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ github.sha }}
+
+      - name: Push frontend image
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }}:${{ github.sha }}
+
+      # ---------------- Azure Login ----------------
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # ---------------- Connect to AKS ----------------
+      - name: Connect to AKS
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ secrets.AKS_RESOURCE_GROUP }} \
+            --name ${{ secrets.AKS_CLUSTER_NAME }} \
+            --overwrite-existing
+
+      # ---------------- Setup Helm ----------------
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      # ---------------- Helm Deploy ----------------
+      - name: Deploy to AKS using Helm
+        run: |
+          helm upgrade --install myapp ./charts/myapp \
+            --set backend.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BACKEND }} \
+            --set backend.image.tag=${{ github.sha }} \
+            --set frontend.image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_FRONTEND }} \
+            --set frontend.image.tag=${{ github.sha }} \
+            --namespace default --create-namespace
